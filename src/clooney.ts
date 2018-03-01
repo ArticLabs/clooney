@@ -12,6 +12,39 @@
  */
 import {Comlink, Endpoint} from 'comlink'; // eslint-disable-line no-unused-vars
 
+// Automatically proxy functions
+Comlink.transferHandlers.set('FUNCTION', {
+  canHandle(obj: any): Boolean {
+    return obj instanceof Function;
+  },
+  serialize(obj: any): any {
+    const {port1, port2} = new MessageChannel();
+    Comlink.expose(obj, port1);
+    return port2;
+  },
+  deserialize(obj: any): any {
+    return Comlink.proxy(obj as Endpoint);
+  },
+});
+
+// Automatically proxy events
+Comlink.transferHandlers.set('EVENT', {
+  canHandle(obj: any): Boolean {
+    return obj instanceof Event;
+  },
+  serialize(obj: any): any {
+    return {
+      targetId: obj && obj.target && obj.target.id,
+      targetClassList: obj && obj.target && obj.target.classList && [...obj.target.classList],
+      detail: obj && obj.detail,
+      data: obj && obj.data,
+    };
+  },
+  deserialize(obj: any): any {
+    return obj;
+  },
+});
+
 export {Comlink} from 'comlink';
 
 /**
@@ -44,7 +77,7 @@ export interface Strategy {
    * `spawn` instantiates the given actor in an actor container of the strategy’s choice.
    * @returns The return type is the type as T, but every method is implicitly async.
    */
-  spawn<T>(actor: new () => T, opts: Object): Promise<T>;
+  spawn<T>(actor: new () => T, args: any[], opts: Object): Promise<T>;
   /**
    * `terminate` calls `terminate()` on all existing containers of the strategy.
    */
@@ -101,9 +134,9 @@ export class RoundRobinStrategy implements Strategy {
     return w;
   }
 
-  async spawn<T>(actor: Actor, opts: Object = {}): Promise<T> {
+  async spawn<T>(actor: Actor, constructorArgs: any[] = [], opts: Object = {}): Promise<T> {
     const container = await this._getNextContainer(opts);
-    return await container.spawn(actor.toString(), opts) as T;
+    return await container.spawn(actor.toString(), constructorArgs) as T;
   }
 
   async terminate() {
@@ -117,15 +150,15 @@ export class RoundRobinStrategy implements Strategy {
 }
 
 export let defaultStrategy = new RoundRobinStrategy();
-export async function spawn<T>(actor: Actor, opts: Object = {}): Promise<T> {
-  return defaultStrategy.spawn<T>(actor, opts);
+export async function spawn<T>(actor: Actor, constructorArgs: any[] = [], opts: Object = {}): Promise<T> {
+  return defaultStrategy.spawn<T>(actor, constructorArgs, opts);
 }
 
 export function makeContainer(endpoint: Endpoint | Window = self): void {
   Comlink.expose({
-    async spawn(actorCode: string): Promise<Actor> {
+    async spawn(actorCode: string, constructorArgs: any[]): Promise<Actor> {
       const actor = (new Function(`return ${actorCode};`))();
-      return Comlink.proxyValue(new actor()) as Actor; // eslint-disable-line new-cap
+      return Comlink.proxyValue(new actor(...constructorArgs)) as Actor; // eslint-disable-line new-cap
     },
   }, endpoint);
 }

@@ -11,6 +11,37 @@
  * limitations under the License.
  */
 import { Comlink } from 'comlink'; // eslint-disable-line no-unused-vars
+// Automatically proxy functions
+Comlink.transferHandlers.set('FUNCTION', {
+    canHandle(obj) {
+        return obj instanceof Function;
+    },
+    serialize(obj) {
+        const { port1, port2 } = new MessageChannel();
+        Comlink.expose(obj, port1);
+        return port2;
+    },
+    deserialize(obj) {
+        return Comlink.proxy(obj);
+    },
+});
+// Automatically proxy events
+Comlink.transferHandlers.set('EVENT', {
+    canHandle(obj) {
+        return obj instanceof Event;
+    },
+    serialize(obj) {
+        return {
+            targetId: obj && obj.target && obj.target.id,
+            targetClassList: obj && obj.target && obj.target.classList && [...obj.target.classList],
+            detail: obj && obj.detail,
+            data: obj && obj.data,
+        };
+    },
+    deserialize(obj) {
+        return obj;
+    },
+});
 export { Comlink } from 'comlink';
 /**
  * `asRemoteValue` marks a value. If a marked value is used as an parameter or return value, it will not be transferred but instead proxied.
@@ -51,9 +82,9 @@ export class RoundRobinStrategy {
         this._nextIndex = (this._nextIndex + 1) % this._options.maxNumContainers;
         return w;
     }
-    async spawn(actor, opts = {}) {
+    async spawn(actor, constructorArgs = [], opts = {}) {
         const container = await this._getNextContainer(opts);
-        return await container.spawn(actor.toString(), opts);
+        return await container.spawn(actor.toString(), constructorArgs);
     }
     async terminate() {
         this._containers.filter(c => c).forEach(container => container.terminate());
@@ -64,14 +95,14 @@ export class RoundRobinStrategy {
     }
 }
 export let defaultStrategy = new RoundRobinStrategy();
-export async function spawn(actor, opts = {}) {
-    return defaultStrategy.spawn(actor, opts);
+export async function spawn(actor, constructorArgs = [], opts = {}) {
+    return defaultStrategy.spawn(actor, constructorArgs, opts);
 }
 export function makeContainer(endpoint = self) {
     Comlink.expose({
-        async spawn(actorCode) {
+        async spawn(actorCode, constructorArgs) {
             const actor = (new Function(`return ${actorCode};`))();
-            return Comlink.proxyValue(new actor()); // eslint-disable-line new-cap
+            return Comlink.proxyValue(new actor(...constructorArgs)); // eslint-disable-line new-cap
         },
     }, endpoint);
 }

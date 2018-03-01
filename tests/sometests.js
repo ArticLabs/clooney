@@ -48,7 +48,7 @@ describe('Clooney', function () {
       .then(actor => actor.callTheCallback(Clooney.asRemoteValue(obj)));
   });
 
-  it('proxies functions', function (done) {
+  it('proxies functions by default', function (done) {
     class MyActor {
       async callCallback(cb) {
         await cb();
@@ -56,7 +56,75 @@ describe('Clooney', function () {
     }
 
     Clooney.spawn(MyActor)
-      .then(actor => actor.callCallback(Clooney.asRemoteValue(done)));
+      .then(actor => actor.callCallback(_ => done()));
+  });
+
+  it('can handle message event listeners', function () {
+    const {port1,port2} = new MessageChannel();
+    class MyActor {
+      constructor() {
+        this.lastMessage = new Promise(resolve => this.resolve = resolve);
+      }
+      onMessage(ev) {
+        this.resolve(ev.data);
+      }
+    }
+    return Clooney.spawn(MyActor)
+      .then(async actor => {
+        port1.addEventListener('message', actor.onMessage.bind(actor));
+        port1.start();
+        port2.postMessage('message');
+        expect(await actor.lastMessage).to.equal('message');
+      });
+  });
+
+  it('can handle custom event listeners', function () {
+    const {port1} = new MessageChannel();
+    class MyActor {
+      constructor() {
+        this.lastEvent = new Promise(resolve => this.resolve = resolve);
+      }
+      onMyEvent(ev) {
+        this.resolve(ev.detail);
+      }
+    }
+    return Clooney.spawn(MyActor)
+      .then(async actor => {
+        port1.addEventListener('my-event', actor.onMyEvent.bind(actor));
+        port1.dispatchEvent(new CustomEvent('my-event', {detail: {message: 'message'}}));
+        expect((await actor.lastEvent).message).to.equal('message');
+      });
+  });
+
+  it('can pass arguments to the constructor of an actor', function () {
+    class MyActor {
+      constructor(_number, _string) {
+        this.number = _number;
+        this.string = _string;
+      }
+    }
+
+    return Clooney.spawn(MyActor, [42, 'hai'])
+      .then(async actor => {
+        expect(await actor.number).to.equal(42);
+        expect(await actor.string).to.equal('hai');
+      });
+  });
+
+  it('can pass objects with functions to the constructor of an actor', function (done) {
+    class MyActor {
+      constructor(obj) {
+        obj.getThing();
+      }
+    }
+
+    const obj = {
+      getThing() {
+        done();
+      }
+    };
+
+    Clooney.spawn(MyActor, [obj])
   });
 
   describe('RoundRobinStrategy', function () {

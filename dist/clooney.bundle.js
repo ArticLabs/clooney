@@ -139,11 +139,15 @@ const Comlink = (function () {
                         path: item.path,
                         wrappedValue: {
                             type: key,
-                            value: item.value,
+                            value: transferHandler.serialize(item.value),
                         },
                     });
                 }
             }
+        }
+        for (const wrappedChild of wrappedChildren) {
+            const container = wrappedChild.path.slice(0, -1).reduce((obj, key) => obj[key], arg);
+            container[wrappedChild.path[wrappedChild.path.length - 1]] = null;
         }
         return {
             type: 'RAW',
@@ -339,6 +343,37 @@ const Comlink = (function () {
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// Automatically proxy functions
+Comlink.transferHandlers.set('FUNCTION', {
+    canHandle(obj) {
+        return obj instanceof Function;
+    },
+    serialize(obj) {
+        const { port1, port2 } = new MessageChannel();
+        Comlink.expose(obj, port1);
+        return port2;
+    },
+    deserialize(obj) {
+        return Comlink.proxy(obj);
+    },
+});
+// Automatically proxy events
+Comlink.transferHandlers.set('EVENT', {
+    canHandle(obj) {
+        return obj instanceof Event;
+    },
+    serialize(obj) {
+        return {
+            targetId: obj && obj.target && obj.target.id,
+            targetClassList: obj && obj.target && obj.target.classList && [...obj.target.classList],
+            detail: obj && obj.detail,
+            data: obj && obj.data,
+        };
+    },
+    deserialize(obj) {
+        return obj;
+    },
+});
 /**
  * `asRemoteValue` marks a value. If a marked value is used as an parameter or return value, it will not be transferred but instead proxied.
  */
@@ -378,9 +413,9 @@ class RoundRobinStrategy {
         this._nextIndex = (this._nextIndex + 1) % this._options.maxNumContainers;
         return w;
     }
-    async spawn(actor, opts = {}) {
+    async spawn(actor, constructorArgs = [], opts = {}) {
         const container = await this._getNextContainer(opts);
-        return await container.spawn(actor.toString(), opts);
+        return await container.spawn(actor.toString(), constructorArgs);
     }
     async terminate() {
         this._containers.filter(c => c).forEach(container => container.terminate());
@@ -391,14 +426,14 @@ class RoundRobinStrategy {
     }
 }
 let defaultStrategy = new RoundRobinStrategy();
-async function spawn(actor, opts = {}) {
-    return defaultStrategy.spawn(actor, opts);
+async function spawn(actor, constructorArgs = [], opts = {}) {
+    return defaultStrategy.spawn(actor, constructorArgs, opts);
 }
 function makeContainer(endpoint = self) {
     Comlink.expose({
-        async spawn(actorCode) {
+        async spawn(actorCode, constructorArgs) {
             const actor = (new Function(`return ${actorCode};`))();
-            return Comlink.proxyValue(new actor()); // eslint-disable-line new-cap
+            return Comlink.proxyValue(new actor(...constructorArgs)); // eslint-disable-line new-cap
         },
     }, endpoint);
 }
